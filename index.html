@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Посилки">
+  <meta name="theme-color" content="#e94b35">
+  <title>Відстеження посилок</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 16px 12px 32px;
+      background: #f3f5f8;
+      color: #202734;
+      font: 16px -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    }
+    main { max-width: 520px; margin: 0 auto; }
+    h1 { margin: 4px 0 5px; font-size: 24px; }
+    h2 { margin: 0 0 12px; font-size: 17px; }
+    p { line-height: 1.4; }
+    .intro { margin: 0 0 16px; color: #5e6876; font-size: 14px; }
+    .panel, .parcel {
+      margin-bottom: 12px;
+      padding: 14px;
+      border: 1px solid #e0e4ea;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 2px 6px rgba(20, 32, 50, .04);
+    }
+    label { display: block; margin: 10px 0 5px; font-size: 13px; font-weight: bold; }
+    input {
+      display: block;
+      width: 100%;
+      min-height: 44px;
+      padding: 9px 11px;
+      border: 1px solid #cbd2dc;
+      border-radius: 8px;
+      background: #fff;
+      color: #202734;
+      font: inherit;
+      font-size: 16px;
+    }
+    button {
+      min-height: 44px;
+      padding: 9px 14px;
+      border: 0;
+      border-radius: 8px;
+      background: #e94b35;
+      color: #fff;
+      font: inherit;
+      font-weight: bold;
+      cursor: pointer;
+      -webkit-appearance: none;
+    }
+    button.secondary { background: #edf0f4; color: #263345; }
+    button.danger { background: transparent; color: #a63a2b; }
+    button:disabled { opacity: .55; }
+    .form-row { margin-top: 10px; }
+    .form-row button { width: 100%; }
+    .note, .empty, .error { margin: 8px 0 0; font-size: 13px; color: #687486; }
+    .error { color: #a12e22; }
+    .toolbar { display: table; width: 100%; margin: 14px 0 8px; }
+    .toolbar h2 { display: table-cell; vertical-align: middle; }
+    .toolbar button { display: table-cell; min-height: 38px; padding: 6px 10px; font-size: 13px; }
+    .parcel { padding: 12px 14px; }
+    .parcel-head { display: table; width: 100%; }
+    .parcel-number { display: table-cell; width: 100%; font-size: 16px; font-weight: bold; word-break: break-all; }
+    .parcel-actions { display: table-cell; padding-left: 8px; white-space: nowrap; text-align: right; }
+    .parcel-actions button { min-height: 36px; padding: 5px 9px; font-size: 13px; }
+    .status { margin: 9px 0 5px; color: #c33c2c; font-size: 15px; font-weight: bold; }
+    .details { margin: 4px 0; color: #505c6b; font-size: 13px; line-height: 1.4; }
+    .updated { margin: 8px 0 0; color: #8992a0; font-size: 11px; }
+    .hidden { display: none; }
+    @media (min-width: 400px) {
+      body { padding-top: 22px; }
+      .panel { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Відстеження посилок</h1>
+    <p class="intro">Збережені накладні залишаються на цьому пристрої. Статус оновлюється за запитом.</p>
+
+    <section class="panel" aria-labelledby="settings-title">
+      <h2 id="settings-title">Підключення до Нової пошти</h2>
+      <label for="api-key">Особистий API-ключ</label>
+      <input id="api-key" type="password" autocomplete="off" autocapitalize="off" placeholder="Вставте API-ключ">
+      <div class="form-row"><button id="save-key" type="button" class="secondary">Зберегти ключ</button></div>
+      <p class="note">Ключ зберігається лише в Safari на цьому пристрої та надсилається напряму до API Нової пошти.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="add-title">
+      <h2 id="add-title">Додати накладну</h2>
+      <label for="tracking-number">Номер накладної</label>
+      <input id="tracking-number" type="text" inputmode="numeric" autocomplete="off" autocapitalize="off" placeholder="Наприклад, 20400000000000">
+      <div class="form-row"><button id="add-parcel" type="button">Додати й перевірити</button></div>
+      <p id="form-error" class="error hidden" role="alert"></p>
+    </section>
+
+    <div class="toolbar">
+      <h2>Мої посилки</h2>
+      <button id="refresh-all" type="button" class="secondary">Оновити всі</button>
+    </div>
+    <div id="parcel-list"></div>
+  </main>
+  <script>
+    (function () {
+      'use strict';
+      var API_URL = 'https://api.novaposhta.ua/v2.0/json/';
+      var KEY_STORAGE = 'parcel-tracker-api-key';
+      var LIST_STORAGE = 'parcel-tracker-items';
+      var input = document.getElementById('tracking-number');
+      var apiKeyInput = document.getElementById('api-key');
+      var listNode = document.getElementById('parcel-list');
+      var formError = document.getElementById('form-error');
+      var items = [];
+      var busy = {};
+
+      function readStorage(key, fallback) {
+        try {
+          var value = window.localStorage.getItem(key);
+          return value === null ? fallback : value;
+        } catch (e) {
+          return fallback;
+        }
+      }
+
+      function writeStorage(key, value) {
+        try {
+          window.localStorage.setItem(key, value);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      function saveItems() {
+        writeStorage(LIST_STORAGE, JSON.stringify(items));
+      }
+
+      function showFormError(text) {
+        formError.textContent = text;
+        formError.className = text ? 'error' : 'error hidden';
+      }
+
+      function addText(parent, tag, className, value) {
+        var node = document.createElement(tag);
+        if (className) node.className = className;
+        node.textContent = value;
+        parent.appendChild(node);
+        return node;
+      }
+
+      function makeButton(label, className, handler) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = className;
+        button.textContent = label;
+        button.onclick = handler;
+        return button;
+      }
+
+      function formatDate(value) {
+        if (!value) return '';
+        return String(value).replace('T', ' ').replace(/:\d\d(?:\.\d+)?$/, '');
+      }
+
+      function firstValue(data, names) {
+        var i;
+        for (i = 0; i < names.length; i++) {
+          if (data[names[i]]) return data[names[i]];
+        }
+        return '';
+      }
+
+      function render() {
+        while (listNode.firstChild) listNode.removeChild(listNode.firstChild);
+        if (!items.length) {
+          addText(listNode, 'p', 'empty', 'Тут з’являться додані накладні.');
+          return;
+        }
+        var i;
+        for (i = 0; i < items.length; i++) {
+          (function (item) {
+            var card = document.createElement('section');
+            card.className = 'parcel';
+            var head = document.createElement('div');
+            head.className = 'parcel-head';
+            addText(head, 'div', 'parcel-number', item.number);
+            var actions = document.createElement('div');
+            actions.className = 'parcel-actions';
+            var refresh = makeButton(busy[item.number] ? '…' : 'Оновити', 'secondary', function () {
+              track(item.number);
+            });
+            refresh.disabled = !!busy[item.number];
+            actions.appendChild(refresh);
+            actions.appendChild(makeButton('×', 'danger', function () {
+              items = items.filter(function (candidate) { return candidate.number !== item.number; });
+              saveItems();
+              render();
+            }));
+            head.appendChild(actions);
+            card.appendChild(head);
+            if (item.error) {
+              addText(card, 'p', 'error', item.error);
+            } else if (item.status) {
+              addText(card, 'p', 'status', item.status);
+              var from = firstValue(item.data || {}, ['CitySender', 'CitySenderDescription']);
+              var to = firstValue(item.data || {}, ['CityRecipient', 'CityRecipientDescription']);
+              if (from || to) addText(card, 'p', 'details', (from || 'Місто відправлення не вказане') + ' → ' + (to || 'місто отримання не вказане'));
+              var destination = firstValue(item.data || {}, ['WarehouseRecipient', 'WarehouseRecipientAddress']);
+              if (destination) addText(card, 'p', 'details', destination);
+              var date = firstValue(item.data || {}, ['ActualDeliveryDate', 'ScheduledDeliveryDate', 'DateCreated']);
+              if (date) addText(card, 'p', 'details', 'Дата: ' + formatDate(date));
+            } else {
+              addText(card, 'p', 'details', 'Ще не перевірено.');
+            }
+            if (item.updated) addText(card, 'p', 'updated', 'Перевірено: ' + item.updated);
+            listNode.appendChild(card);
+          }(items[i]));
+        }
+      }
+
+      function track(number) {
+        var key = readStorage(KEY_STORAGE, '');
+        if (!key) {
+          showFormError('Спершу введіть і збережіть API-ключ Нової пошти.');
+          return;
+        }
+        busy[number] = true;
+        showFormError('');
+        render();
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', API_URL, true);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.onreadystatechange = function () {
+          if (xhr.readyState !== 4) return;
+          busy[number] = false;
+          var index = -1;
+          var i;
+          for (i = 0; i < items.length; i++) {
+            if (items[i].number === number) { index = i; break; }
+          }
+          if (index < 0) return;
+          try {
+            var response = JSON.parse(xhr.responseText || '{}');
+            if (!response.success) {
+              items[index].error = (response.errors && response.errors.length) ?
+                response.errors.join(' ') : 'API не прийняв запит. Перевірте API-ключ і номер.';
+            } else if (xhr.status < 200 || xhr.status >= 300) {
+              items[index].error = 'Не вдалося з’єднатися з API (HTTP ' + xhr.status + ').';
+            } else if (!response.data || !response.data.length) {
+              items[index].error = 'За цим номером даних не знайдено.';
+            } else {
+              items[index].data = response.data[0];
+              items[index].status = response.data[0].Status || response.data[0].StatusDescription || 'Статус отримано';
+              items[index].error = '';
+              items[index].updated = new Date().toLocaleString('uk-UA');
+            }
+          } catch (e) {
+            items[index].error = 'Не вдалося прочитати відповідь API. Спробуйте ще раз.';
+          }
+          saveItems();
+          render();
+        };
+        xhr.onerror = function () {
+          busy[number] = false;
+          var i;
+          for (i = 0; i < items.length; i++) {
+            if (items[i].number === number) items[i].error = 'Помилка мережі. Перевірте інтернет і спробуйте ще раз.';
+          }
+          saveItems();
+          render();
+        };
+        xhr.ontimeout = function () {
+          busy[number] = false;
+          var i;
+          for (i = 0; i < items.length; i++) {
+            if (items[i].number === number) items[i].error = 'Час очікування минув. Спробуйте ще раз.';
+          }
+          saveItems();
+          render();
+        };
+        xhr.timeout = 20000;
+        xhr.send(JSON.stringify({
+          apiKey: key,
+          modelName: 'TrackingDocument',
+          calledMethod: 'getStatusDocuments',
+          methodProperties: {
+            Documents: [{ DocumentNumber: number, Phone: '' }]
+          }
+        }));
+      }
+
+      document.getElementById('save-key').onclick = function () {
+        var key = apiKeyInput.value.replace(/^\s+|\s+$/g, '');
+        if (!key) {
+          showFormError('Введіть API-ключ перед збереженням.');
+          return;
+        }
+        if (!writeStorage(KEY_STORAGE, key)) {
+          showFormError('Safari не дозволив зберегти ключ. Перевірте налаштування приватного режиму.');
+          return;
+        }
+        apiKeyInput.value = '';
+        showFormError('');
+        window.alert('API-ключ збережено лише на цьому пристрої.');
+      };
+
+      document.getElementById('add-parcel').onclick = function () {
+        var number = input.value.replace(/\s+/g, '');
+        if (!/^\d{8,20}$/.test(number)) {
+          showFormError('Введіть номер накладної з 8–20 цифр.');
+          return;
+        }
+        var i;
+        for (i = 0; i < items.length; i++) {
+          if (items[i].number === number) {
+            showFormError('');
+            track(number);
+            return;
+          }
+        }
+        items.unshift({ number: number, status: '', error: '', data: null, updated: '' });
+        input.value = '';
+        saveItems();
+        render();
+        track(number);
+      };
+
+      document.getElementById('refresh-all').onclick = function () {
+        var i;
+        for (i = 0; i < items.length; i++) track(items[i].number);
+      };
+
+      apiKeyInput.value = readStorage(KEY_STORAGE, '');
+      try {
+        var saved = JSON.parse(readStorage(LIST_STORAGE, '[]'));
+        if (Object.prototype.toString.call(saved) === '[object Array]') {
+          items = saved.filter(function (item) {
+            return item && /^\d{8,20}$/.test(item.number);
+          });
+        }
+      } catch (e) {
+        items = [];
+      }
+      render();
+    }());
+  </script>
+</body>
+</html>
