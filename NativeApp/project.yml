@@ -17,6 +17,7 @@ targets:
     sources:
       - Sources
     info:
+      path: Info.plist
       properties:
         CFBundleDisplayName: Посилки
         LSRequiresIPhoneOS: true
